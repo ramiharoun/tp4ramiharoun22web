@@ -2,6 +2,31 @@ package com.example.tp4ramiharounweb.llm;
 
 import jakarta.enterprise.context.Dependent;
 import java.io.Serializable;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Path;
+import java.util.List;
+
+import dev.langchain4j.data.document.Document;
+import dev.langchain4j.data.document.loader.FileSystemDocumentLoader;
+import dev.langchain4j.data.document.splitter.DocumentSplitters;
+import dev.langchain4j.data.segment.TextSegment;
+
+import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
+
+import dev.langchain4j.store.embedding.EmbeddingStore;
+import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
+
+import dev.langchain4j.rag.content.retriever.ContentRetriever;
+import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
+import dev.langchain4j.rag.content.retriever.WebSearchContentRetriever;
+import dev.langchain4j.rag.DefaultRetrievalAugmentor;
+import dev.langchain4j.rag.RetrievalAugmentor;
+import dev.langchain4j.rag.query.router.DefaultQueryRouter;
+
+import dev.langchain4j.web.search.tavily.TavilyWebSearchEngine;
 
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.memory.ChatMemory;
@@ -36,10 +61,63 @@ public class LlmClient implements Serializable {
         // 2. Mémoire : conserve les 10 derniers messages
         this.chatMemory = MessageWindowChatMemory.withMaxMessages(10);
 
-        // 3. Création de l'assistant via AiServices
+        // Test 5 : RAG avec PDF local + recherche Web Tavily
+
+
+        URL url = Thread.currentThread().getContextClassLoader().getResource("support_rag.pdf");
+        if (url == null) {
+            throw new IllegalStateException("Ressource introuvable : support_rag.pdf");
+        }
+
+        Path pdfPath;
+        try {
+            pdfPath = Path.of(url.toURI());
+        } catch (URISyntaxException e) {
+            throw new IllegalStateException("URI invalide pour support_rag.pdf", e);
+        }
+
+        Document doc = FileSystemDocumentLoader.loadDocument(pdfPath);
+        var splitter = DocumentSplitters.recursive(500, 50);
+        List<TextSegment> segments = splitter.split(doc);
+
+        EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
+        List<Embedding> vectors = embeddingModel.embedAll(segments).content();
+
+        EmbeddingStore<TextSegment> store = new InMemoryEmbeddingStore<>();
+        store.addAll(vectors, segments);
+
+        ContentRetriever pdfRetriever = EmbeddingStoreContentRetriever.builder()
+                .embeddingModel(embeddingModel)
+                .embeddingStore(store)
+                .maxResults(5)
+                .build();
+
+        // Recherche Web : Tavily
+        String tavilyKey = System.getenv("TAVILY_API_KEY");
+        if (tavilyKey == null || tavilyKey.isBlank()) {
+            throw new IllegalStateException("Variable d'environnement TAVILY_API_KEY manquante !");
+        }
+
+        TavilyWebSearchEngine webSearchEngine = TavilyWebSearchEngine.builder()
+                .apiKey(tavilyKey)
+                .build();
+
+        ContentRetriever webRetriever = WebSearchContentRetriever.builder()
+                .webSearchEngine(webSearchEngine)
+                .maxResults(5)
+                .build();
+
+        // Routage par défaut : utilise PDF + Web
+        DefaultQueryRouter router = new DefaultQueryRouter(pdfRetriever, webRetriever);
+
+        RetrievalAugmentor retrievalAugmentor = DefaultRetrievalAugmentor.builder()
+                .queryRouter(router)
+                .build();
+
         this.assistant = AiServices.builder(Assistant.class)
                 .chatModel(model)
                 .chatMemory(chatMemory)
+                .retrievalAugmentor(retrievalAugmentor)
                 .build();
     }
 
