@@ -53,6 +53,18 @@ public class Bb implements Serializable {
      */
     private StringBuilder conversation = new StringBuilder();
 
+    // Rôles spéciaux pour activer Test 4 et Test 5
+    private static final String ROLE_TEST4 = """
+            You are an assistant that answers only if the question is related to
+            the course documents about RAG, large language models or group dynamics.
+            You may answer without using these documents when the topic is clearly unrelated.
+            """;
+    private static final String ROLE_TEST5 = """
+            You are an assistant that uses both the course documents about RAG and group dynamics,
+            and external up-to-date information from the Web when it is useful to improve the answer.
+            """;
+
+
     /**
      * Contexte JSF. Utilisé pour qu'un message d'erreur s'affiche dans le formulaire.
      */
@@ -139,8 +151,22 @@ public class Bb implements Serializable {
 
         try {
             String q = question.trim();
-            // Appel au client LLM (méthode d'instance)
-            this.reponse = llmClient.chat(q);
+
+            String reponseLlm;
+
+            // Choix du test en fonction du rôle sélectionné
+            if (ROLE_TEST4.equals(roleSysteme)) {
+                // Test 4 : RAG conditionnel (utilise ou non les PDF)
+                reponseLlm = llmClient.chatTest4(q);
+            } else if (ROLE_TEST5.equals(roleSysteme)) {
+                // Test 5 : RAG PDF + Web Tavily
+                reponseLlm = llmClient.chatTest5(q);
+            } else {
+                // Autres rôles : comportement "par défaut" du client
+                reponseLlm = llmClient.chat(q);
+            }
+
+            this.reponse = reponseLlm;
 
             // Afficher dans la zone de transcript
             afficherConversation();
@@ -154,7 +180,6 @@ public class Bb implements Serializable {
 
         return null; // rester sur la même page
     }
-
 
 
     /**
@@ -203,6 +228,18 @@ public class Bb implements Serializable {
                     are you tell them the average price of a meal.
                     """;
             this.listeRolesSysteme.add(new SelectItem(role, "Guide touristique"));
+
+            // Rôle pour TEST 4
+            this.listeRolesSysteme.add(new SelectItem(
+                    ROLE_TEST4,
+                    "Mode Test 4 : RAG conditionnel (PDF seulement si pertinent)"
+            ));
+
+            // Rôle pour TEST 5
+            this.listeRolesSysteme.add(new SelectItem(
+                    ROLE_TEST5,
+                    "Mode Test 5 : RAG + Web (PDF + Tavily)"
+            ));
         }
 
         return this.listeRolesSysteme;
